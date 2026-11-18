@@ -60,13 +60,13 @@
           </div>
           <div class="options">
             <button
-              v-for="opt in currentQuestion.options"
-              :key="opt.label"
+              v-for="(optText, oi) in currentQuestion.options"
+              :key="oi"
               class="option"
-              @click="selectAnswer(opt)"
+              @click="selectAnswer(oi)"
             >
-              <span class="opt-label">{{ opt.label }}</span>
-              <span class="opt-text">{{ opt.text }}</span>
+              <span class="opt-label">{{ optionLabel(oi) }}</span>
+              <span class="opt-text">{{ optText }}</span>
             </button>
           </div>
         </div>
@@ -115,17 +115,25 @@
         </div>
 
         <div class="card result-card" :style="{ '--accent': accentColor }">
+          <div v-if="matchInfo.badge" class="result-badge">🏆 {{ matchInfo.badge }}</div>
           <div class="result-tag">{{ result.tag }}</div>
           <div class="result-name">{{ result.name }}</div>
           <div class="result-score">
-            <span class="score-num">{{ topScore.percent }}</span>
+            <span class="score-num">{{ matchInfo.top.percent }}</span>
             <span class="score-unit">% 契合度</span>
           </div>
           <p class="result-summary">{{ result.summary }}</p>
+          <p class="result-diff">你和 TA 有 {{ matchInfo.top.diff }} 题选得不一样</p>
           <div class="result-meta">
             <span class="meta-chip">依恋：{{ result.attachment }}</span>
             <span class="meta-chip">佐证：{{ result.episodes }}</span>
           </div>
+        </div>
+
+        <!-- 低置信度提示：你谁都不像 -->
+        <div v-if="matchInfo.lowConfidence" class="card lowconf-card">
+          <h3 class="card-title"><span class="tick"></span>你谁都不像</h3>
+          <p class="analysis-text">你的契合度低于 45%，和这几位嘉宾都不太像——也许你更像你自己。</p>
         </div>
 
         <!-- 8 位嘉宾契合度排行 -->
@@ -139,11 +147,11 @@
               :class="{ top: i === 0 }"
             >
               <span class="rank-no">{{ i + 1 }}</span>
-              <span class="rank-name" :style="{ color: g.color }">{{ g.name }}</span>
+              <span class="rank-name" :style="{ color: guestColor(g.name) }">{{ g.name }}</span>
               <div class="rank-bar">
                 <div
                   class="rank-fill"
-                  :style="{ width: g.percent + '%', background: g.color }"
+                  :style="{ width: g.percent + '%', background: guestColor(g.name) }"
                 ></div>
               </div>
               <span class="rank-percent">{{ g.percent }}%</span>
@@ -216,7 +224,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { intro, questions } from './data/questions.js'
-import { rankGuests } from './logic/match.js'
+import { matchResult } from './logic/match.js'
 import {
   results,
   psychologyInsights,
@@ -312,8 +320,13 @@ function startTest() {
   answers.value = []
 }
 
-function selectAnswer(opt) {
-  answers.value[currentIndex.value] = { type: opt.type, sub: opt.sub }
+const OPT_LABELS = ['A', 'B', 'C', 'D']
+function optionLabel(oi) {
+  return OPT_LABELS[oi] || ''
+}
+
+function selectAnswer(oi) {
+  answers.value[currentIndex.value] = OPT_LABELS[oi]
   if (currentIndex.value < questions.length - 1) {
     currentIndex.value++
   } else {
@@ -330,14 +343,17 @@ function showResult() {
   stage.value = 'result'
 }
 
-const guestRank = computed(() => rankGuests(answers.value))
-const topGuest = computed(() => guestRank.value[0] || null)
-const topScore = computed(() => topGuest.value || { name: '', percent: 0 })
-// 结果卡片 = 排行榜第 1 名对应的完整嘉宾数据，保证与分数一致
+const matchInfo = computed(() => matchResult(answers.value))
+const guestRank = computed(() => matchInfo.value.ranked)
+// 结果卡片 = 契合度第一名的完整嘉宾数据
 const result = computed(() => {
-  const t = topGuest.value
-  return results.find((g) => g.id === t?.id) || results[0]
+  const t = matchInfo.value.top
+  return results.find((g) => g.name === t?.name) || results[0]
 })
+
+function guestColor(name) {
+  return results.find((g) => g.name === name)?.color || '#ff7a9e'
+}
 
 const accentColor = computed(() => result.value.color || '#ff7a9e')
 
@@ -356,13 +372,13 @@ const pairNote = computed(() => {
   return pairNotes[map[r.id]] || null
 })
 
-// 答题回顾：根据存储的选项索引找对应文字
+// 答题回顾：根据存储的字母找选项文字
 function answeredText(i) {
   const a = answers.value[i]
   if (!a || !questions[i]) return '未作答'
-  const opt = questions[i].options.find((o) => o.type === a.type && o.sub === a.sub)
-  if (opt) return opt.label + '. ' + opt.text
-  return '未作答'
+  const idx = OPT_LABELS.indexOf(a)
+  if (idx < 0) return '未作答'
+  return a + '. ' + questions[i].options[idx]
 }
 
 function restart() {
@@ -1004,6 +1020,26 @@ function restart() {
 }
 
 /* ---------- 结果页：相似度分数 + 排行 ---------- */
+.result-badge {
+  display: inline-block;
+  margin: 0 auto 12px;
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffd700, #ff9a3c);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  box-shadow: 0 4px 14px rgba(255, 154, 60, 0.4);
+}
+.result-diff {
+  color: #8a8aa0;
+  font-size: 13.5px;
+  margin: 4px 0 14px;
+}
+.lowconf-card {
+  border-left: 3px solid #ff7a9e;
+}
 .result-score {
   margin: 10px auto 12px;
   display: flex;

@@ -1,66 +1,46 @@
-import { questions } from '../data/questions.js'
-import { results } from '../data/results.js'
+import { questions, simpleIndex } from '../data/questions.js'
+import { keys, simpleKeys } from '../data/keys.js'
 
-// 8 人并列时的固定顺序（确定性、可复现）
-const ORDER = ['zhangmeng', 'matianyu', 'lina', 'xufei', 'wenjier', 'wangzixuan', 'baixiaochun', 'qingzhi']
+const LET = ['A', 'B', 'C', 'D']
+const ORDER = ['张萌', '马天宇', '厉娜', '许飞', '文吉儿', '王子璇', '白小纯', '青稚']
 
-// 计分：每个选项 type 记 1.0 分，sub 记 0.5 分
-export function scoreAnswers(answers) {
-  const s = { 1: 0, 2: 0, 3: 0, 4: 0 }
-  answers.forEach(({ type, sub }) => {
-    if (s[type] !== undefined) s[type] += 1
-    if (s[sub] !== undefined && sub !== type) s[sub] += 0.5
-  })
-  return s
+function credit(group, userAns, keyAns) {
+  if (userAns === keyAns) return 1
+  const a = LET.indexOf(userAns)
+  const b = LET.indexOf(keyAns)
+  return group.some((g) => g.includes(a) && g.includes(b)) ? 0.5 : 0
 }
 
-function byId(id) {
-  return results.find((g) => g.id === id)
-}
-
-// 并列（cosine 相同到 3 位小数）时：先比该人主类型的用户原始分，再按固定顺序
-function tieBreak(a, b, s) {
-  const pa = byId(a.id)
-  const pb = byId(b.id)
-  const da = s[pa.typeCode] ?? 0
-  const db = s[pb.typeCode] ?? 0
-  if (da !== db) return db - da
-  return ORDER.indexOf(a.id) - ORDER.indexOf(b.id)
-}
-
-// 8 位嘉宾余弦相似度计分
-export function rankGuests(answersOrScores) {
-  const s = Array.isArray(answersOrScores) ? scoreAnswers(answersOrScores) : answersOrScores
-  const u = [s[1], s[2], s[3], s[4]]
-  const nu = Math.hypot(...u) || 1
-
-  const raw = results.map((g) => {
-    const p = g.profile
-    const dot = u.reduce((a, v, i) => a + v * p[i], 0)
-    const np = Math.hypot(...p)
-    return { id: g.id, name: g.name, color: g.color, cos: dot / (nu * np) }
-  })
-
-  const maxCos = Math.max(...raw.map((r) => r.cos), 1e-6)
-  return raw
-    .map((r) => ({ ...r, percent: Math.round((r.cos / maxCos) * 100) }))
-    .sort((a, b) => {
-      // 取 cos 到 3 位小数比较
-      const ac = Math.round(a.cos * 1000)
-      const bc = Math.round(b.cos * 1000)
-      if (bc !== ac) return bc - ac
-      return tieBreak(a, b, s)
+export function rankGuests(answers, simple = false) {
+  const idx = simple ? simpleIndex : questions.map((_, i) => i)
+  const ks = simple ? simpleKeys : keys
+  const n = idx.length
+  const rows = ORDER.map((name) => {
+    let raw = 0
+    let diff = 0
+    idx.forEach((qi, i) => {
+      raw += credit(questions[qi].groups, answers[i], ks[name][i])
+      if (answers[i] !== ks[name][i]) diff++
     })
+    return {
+      id: name,
+      name,
+      percent: Math.round((raw / n) * 100),
+      diff,
+      exact: diff === 0,
+    }
+  })
+  rows.sort((a, b) => b.percent - a.percent || a.diff - b.diff || ORDER.indexOf(a.name) - ORDER.indexOf(b.name))
+  return rows
 }
 
-export function matchResult(answers) {
-  const ranked = rankGuests(answers)
+export function matchResult(answers, simple = false) {
+  const ranked = rankGuests(answers, simple)
+  const top = ranked[0]
   return {
-    result: byId(ranked[0].id),
-    scores: scoreAnswers(answers),
+    top,
     ranked,
-    note: null,
+    badge: top.exact ? `满匹配 · ${simple ? 5 : 10} 题全中` : null,
+    lowConfidence: top.percent < 45,
   }
 }
-
-export { questions, results }
