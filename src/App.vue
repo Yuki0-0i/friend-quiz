@@ -197,9 +197,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { intro, questions } from './data/questions.js'
-import { matchResult, rankGuests } from './logic/match.js'
+import { rankGuests } from './logic/match.js'
 import {
   results,
   psychologyInsights,
@@ -243,15 +243,22 @@ const danmakuList = ref([])
 let danmakuTimer = null
 let danmakuSeq = 0
 
+function stopDanmaku() {
+  clearTimeout(danmakuTimer)
+  danmakuTimer = null
+  danmakuList.value = []
+}
+
 function startDanmaku() {
+  if (danmakuTimer) return // 已在运行则不重复启动
   const pool = results.map((g) => ({ name: g.name, color: g.color, quote: g.quote }))
   let idx = 0
   function spawnOne() {
     const item = pool[idx % pool.length]
     const duration = (12 + Math.random() * 6).toFixed(1) + 's'
     const key = 'dm-' + danmakuSeq++
-    // 在页面 15%~70% 高度随机分布，避免多条重叠
-    const top = (15 + Math.random() * 55).toFixed(1) + '%'
+    // 弹幕只在下部区域飘过（页面 70%~92% 高度），避开答题卡片，完整可见
+    const top = (70 + Math.random() * 22).toFixed(1) + '%'
     const el = { key, name: item.name, color: item.color, quote: item.quote, duration, top, life: 18000 }
     danmakuList.value.push(el)
     // 飘完自动移除
@@ -264,6 +271,15 @@ function startDanmaku() {
   }
   spawnOne()
 }
+
+// 出结果时停止语录弹幕
+watch(stage, (s) => {
+  if (s === 'result') {
+    stopDanmaku()
+  } else if (s === 'intro') {
+    startDanmaku()
+  }
+})
 
 function startTest() {
   stage.value = 'quiz'
@@ -289,16 +305,16 @@ function showResult() {
   stage.value = 'result'
 }
 
-const match = computed(() => matchResult(answers.value))
-const result = computed(() => match.value.result)
 const guestRank = computed(() => rankGuests(answers.value))
-const topScore = computed(() => guestRank.value[0] || { name: '', percent: 0 })
-
-const accentColor = computed(() => {
-  const colors = ['#ff7a9e', '#5da9ff', '#7bd0c1', '#ae85ca']
-  const idx = (match.value.primary - 1) % colors.length
-  return colors[idx]
+const topGuest = computed(() => guestRank.value[0] || null)
+const topScore = computed(() => topGuest.value || { name: '', percent: 0 })
+// 结果卡片 = 排行榜第 1 名对应的完整嘉宾数据，保证与分数一致
+const result = computed(() => {
+  const t = topGuest.value
+  return results.find((g) => g.id === t?.id) || results[0]
 })
+
+const accentColor = computed(() => result.value.color || '#ff7a9e')
 
 const pairNote = computed(() => {
   const r = result.value
@@ -902,14 +918,14 @@ function restart() {
   transform: translateX(-110%);
   white-space: nowrap;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--dcolor, #e85d8a);
-  background: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.85);
   border: 1.5px solid var(--dcolor, #e85d8a);
   padding: 7px 16px;
   border-radius: 999px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
-  opacity: 0.72;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+  opacity: 0.9;
   animation: danmaku-move linear forwards;
 }
 .danmaku-name {
@@ -1016,7 +1032,7 @@ function restart() {
   position: fixed;
   top: 18px;
   right: 18px;
-  z-index: 90;
+  z-index: 95;
   display: flex;
   align-items: center;
   gap: 10px;
