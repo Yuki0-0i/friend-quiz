@@ -20,7 +20,7 @@
         class="danmaku"
         :style="{ '--dcolor': d.color, animationDuration: d.duration, top: d.top }"
       >
-        <span class="danmaku-name">{{ d.name }}：</span>{{ d.quote }}
+        <span v-if="d.name" class="danmaku-name">{{ d.name }}：</span>{{ d.quote }}
       </div>
       </transition-group>
     </div>
@@ -106,9 +106,8 @@
               <span class="review-num">{{ i + 1 }}</span>
               <div class="review-content">
                 <div class="review-q">{{ q.q }}</div>
-                <div class="review-a" :class="'pick-' + answers[i]">
-                  <span class="review-label">{{ q.options[answers[i] - 1].label }}</span>
-                  {{ q.options[answers[i] - 1].text }}
+                <div class="review-a">
+                  <span class="review-label">{{ answeredText(i) }}</span>
                 </div>
               </div>
             </div>
@@ -120,18 +119,18 @@
           <div class="result-name">{{ result.name }}</div>
           <div class="result-score">
             <span class="score-num">{{ topScore.percent }}</span>
-            <span class="score-unit">% 相似</span>
+            <span class="score-unit">% 契合度</span>
           </div>
           <p class="result-summary">{{ result.summary }}</p>
           <div class="result-meta">
-            <span class="meta-chip">{{ result.typeLabel }}</span>
-            <span class="meta-chip">{{ result.attachment }}</span>
+            <span class="meta-chip">依恋：{{ result.attachment }}</span>
+            <span class="meta-chip">佐证：{{ result.episodes }}</span>
           </div>
         </div>
 
-        <!-- 8 位嘉宾相似度排行榜 -->
+        <!-- 8 位嘉宾契合度排行 -->
         <div class="card rank-card">
-          <h3 class="card-title"><span class="tick"></span>8 位嘉宾相似度排行</h3>
+          <h3 class="card-title"><span class="tick"></span>8 位嘉宾契合度排行</h3>
           <div class="rank-list">
             <div
               v-for="(g, i) in guestRank"
@@ -152,6 +151,15 @@
           </div>
         </div>
 
+        <!-- 盲点与建议 -->
+        <div class="card blindspot-card">
+          <h3 class="card-title"><span class="tick"></span>你的盲点</h3>
+          <p class="analysis-text">{{ result.blindspot }}</p>
+          <h3 class="card-title"><span class="tick"></span>给你的建议</h3>
+          <p class="analysis-text">{{ result.advice }}</p>
+        </div>
+
+        <!-- 依恋底色档案 -->
         <div class="card analysis-card">
           <h3 class="card-title"><span class="tick"></span>行为线索</h3>
           <p class="analysis-text">{{ result.behavior }}</p>
@@ -159,10 +167,19 @@
           <h3 class="card-title"><span class="tick"></span>性格底色</h3>
           <p class="analysis-text">{{ result.trait }}</p>
 
-          <h3 class="card-title"><span class="tick"></span>心理学视角</h3>
+          <h3 class="card-title"><span class="tick"></span>节目证据</h3>
+          <p class="analysis-text">{{ result.evidence }}</p>
+
+          <h3 class="card-title"><span class="tick"></span>心理机制</h3>
           <ul class="notes">
-            <li v-for="(n, i) in result.notes" :key="i" class="note">{{ n }}</li>
+            <li v-for="(n, i) in result.mechanism" :key="i" class="note">{{ n }}</li>
           </ul>
+
+          <h3 class="card-title"><span class="tick"></span>强项 / 盲点</h3>
+          <p class="analysis-text">{{ result.strengths }}</p>
+
+          <h3 class="card-title"><span class="tick"></span>一句话</h3>
+          <p class="analysis-text one-liner">{{ result.oneLiner }}</p>
         </div>
 
         <!-- 追逃配对提示 -->
@@ -205,6 +222,8 @@ import {
   psychologyInsights,
   references,
   pairNotes,
+  guestQuotes,
+  sharedQuotes,
 } from './data/results.js'
 
 const stage = ref('intro')
@@ -222,7 +241,6 @@ function bubbleLoop() {
 
 onMounted(() => {
   bubbleLoop()
-  startDanmaku()
 })
 onBeforeUnmount(() => {
   clearTimeout(bubbleTimer)
@@ -251,10 +269,17 @@ function stopDanmaku() {
 
 function startDanmaku() {
   if (danmakuTimer) return // 已在运行则不重复启动
-  const pool = results.map((g) => ({ name: g.name, color: g.color, quote: g.quote }))
+  // 语录库：嘉宾语录 + 共享池混合
+  const pool = []
+  guestQuotes.forEach((g) => {
+    g.quotes.forEach((q) => pool.push({ name: g.name, color: g.color, quote: q, isGuest: true }))
+  })
+  sharedQuotes.forEach((q) => pool.push({ name: '', color: '#8a8aa0', quote: q, isGuest: false }))
+  // 打乱顺序
+  const shuffled = [...pool].sort(() => Math.random() - 0.5)
   let idx = 0
   function spawnOne() {
-    const item = pool[idx % pool.length]
+    const item = shuffled[idx % shuffled.length]
     const duration = (12 + Math.random() * 6).toFixed(1) + 's'
     const key = 'dm-' + danmakuSeq++
     // 弹幕只在下部区域飘过（页面 70%~92% 高度），避开答题卡片，完整可见
@@ -272,12 +297,12 @@ function startDanmaku() {
   spawnOne()
 }
 
-// 出结果时停止语录弹幕
+// 弹幕只在答题阶段飘：intro/result 都停止，quiz 才启动
 watch(stage, (s) => {
-  if (s === 'result') {
-    stopDanmaku()
-  } else if (s === 'intro') {
+  if (s === 'quiz') {
     startDanmaku()
+  } else {
+    stopDanmaku()
   }
 })
 
@@ -288,7 +313,7 @@ function startTest() {
 }
 
 function selectAnswer(opt) {
-  answers.value[currentIndex.value] = opt.type
+  answers.value[currentIndex.value] = { type: opt.type, sub: opt.sub }
   if (currentIndex.value < questions.length - 1) {
     currentIndex.value++
   } else {
@@ -318,10 +343,27 @@ const accentColor = computed(() => result.value.color || '#ff7a9e')
 
 const pairNote = computed(() => {
   const r = result.value
-  if (r.id === 'lina') return pairNotes.lina_xufei
-  if (r.id === 'wenjier') return pairNotes.wenjier_wangzixuan
-  return null
+  const map = {
+    zhangmeng: 'zhangmeng_matianyu',
+    matianyu: 'zhangmeng_matianyu',
+    lina: 'lina_xufei',
+    xufei: 'lina_xufei',
+    wenjier: 'wenjier_wangzixuan',
+    wangzixuan: 'wenjier_wangzixuan',
+    baixiaochun: 'qingzhi_baixiaochun',
+    qingzhi: 'qingzhi_baixiaochun',
+  }
+  return pairNotes[map[r.id]] || null
 })
+
+// 答题回顾：根据存储的选项索引找对应文字
+function answeredText(i) {
+  const a = answers.value[i]
+  if (!a || !questions[i]) return '未作答'
+  const opt = questions[i].options.find((o) => o.type === a.type && o.sub === a.sub)
+  if (opt) return opt.label + '. ' + opt.text
+  return '未作答'
+}
 
 function restart() {
   clearTimeout(matchTimer)
@@ -513,7 +555,7 @@ function restart() {
 }
 .option {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   text-align: left;
   padding: 14px 18px;
@@ -525,6 +567,14 @@ function restart() {
   color: #444;
   line-height: 1.55;
   transition: all 0.18s;
+  width: 100%;
+}
+.opt-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+  line-height: 1.6;
+  padding-top: 2px;
 }
 @media (hover: hover) {
   .option:hover {
@@ -658,6 +708,15 @@ function restart() {
   font-size: 14.5px;
   line-height: 1.85;
   margin: 0 0 10px;
+}
+.one-liner {
+  font-weight: 700;
+  font-size: 15.5px;
+  color: #e85d8a;
+  background: #fdf0f4;
+  border-left: 3px solid #ff7a9e;
+  padding: 12px 16px;
+  border-radius: 8px;
 }
 .notes {
   list-style: none;
